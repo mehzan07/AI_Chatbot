@@ -46,6 +46,8 @@ def chatbot_response(user_input):
     # Return the matching response or a default message
     return responses.get(user_input, "I'm sorry, I didn't understand that.")
 
+
+
 # Run the Flask app
 if __name__ == "__main__":
     app.run(debug=True)
