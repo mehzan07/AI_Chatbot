@@ -72,113 +72,161 @@ def get_last_message(user_input):
     conn.close()
     return last_message[0] if last_message else ""
 
-# Fetch factual answers from web search
-
-''' def search_web(query):
-    """Search for factual answers using Bing."""
-    bing_api_key = "YOUR_REAL_BING_API_KEY"
-    url = f"https://api.bing.microsoft.com/v7.0/search?q={query}"
-    headers = {
-        "Ocp-Apim-Subscription-Key": bing_api_key,
-        "Content-Type": "application/json"
-    }
-    '''
-#This is other allternative to search web
-
-
-import requests
-import re
-
+# with Auto Capital Detection for all counytries. and adding more queston like  who is the president
 def search_wikipedia(query):
-    try:
-        # Step 1: Search Wikipedia
-        search_api_url = "https://en.wikipedia.org/w/api.php"
-        search_params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": query,
-            "format": "json"
-        }
+    import re
 
-        search_response = requests.get(search_api_url, params=search_params, timeout=10)
-        search_response.raise_for_status()
-        search_data = search_response.json()
+    # Clean and prepare query
+    user_query = query.lower().strip()
+    filtered_query = user_query.replace("what is ", "").replace("who is ", "").replace("tell me about ", "").strip()
+    formatted_query = filtered_query.replace(" ", "_")
 
-        search_results = search_data.get("query", {}).get("search", [])
-        if not search_results:
-            return "I couldn't find a relevant Wikipedia article. Please try rephrasing your question."
+    # If user asks for capital, population, president, currency, etc.
+    fact_type = None
+    if "capital of" in user_query:
+        fact_type = "capital"
+    elif "population of" in user_query:
+        fact_type = "population"
+    elif "president of" in user_query:
+        fact_type = "leader"
+    elif "currency of" in user_query:
+        fact_type = "currency"
 
-        top_result_title = search_results[0]["title"]
+    # Try to extract country name
+    country_match = re.search(r"of ([a-zA-Z ]+)", user_query)
+    country_name = country_match.group(1).strip() if country_match else filtered_query
 
-        # Step 2: Get summary
-        summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{top_result_title.replace(' ', '_')}"
-        summary_response = requests.get(summary_url, timeout=10)
-        summary_response.raise_for_status()
-        summary_data = summary_response.json()
-
-        title = summary_data.get("title", "")
-        description = summary_data.get("description", "")
-        full_extract = summary_data.get("extract", "")
-
-        # Step 3: Get only the first short sentence
-        first_sentence = re.split(r'(?<=[.!?])\s+', full_extract.strip())[0]
-
-        # Step 4: Direct capital answer if query includes "capital" or "capital of"
-        if "capital" in query.lower():
-            capital_map = {
-                "France": "Paris",
-                "Germany": "Berlin",
-                "Italy": "Rome",
-                "Spain": "Madrid",
-                "India": "New Delhi",
-                "Japan": "Tokyo",
-                "United States": "Washington, D.C."
+    if fact_type:
+        try:
+            # Query Wikidata API for structured fact
+            wikidata_url = "https://www.wikidata.org/w/api.php"
+            params = {
+                "action": "wbsearchentities",
+                "search": country_name,
+                "language": "en",
+                "format": "json",
+                "type": "item"
             }
-            capital = capital_map.get(title, None)
-            if capital:
-                return f"The capital of {title} is {capital}."
-            else:
-                return f"{first_sentence}"
+            resp = requests.get(wikidata_url, params=params, timeout=10)
+            entity_results = resp.json().get("search", [])
+            if not entity_results:
+                return f"Could not find country data for '{country_name}'."
 
-        # Otherwise just return short version of the topic
-        return f"{first_sentence}"
+            qid = entity_results[0]["id"]
+
+            # Property IDs for Wikidata
+            property_ids = {
+                "capital": "P36",
+                "population": "P1082",
+                "leader": "P35",
+                "currency": "P38"
+            }
+            prop_id = property_ids.get(fact_type)
+            claims_url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
+            claims_resp = requests.get(claims_url, timeout=10)
+            entity_data = claims_resp.json()
+            claims = entity_data["entities"][qid]["claims"]
+
+            if prop_id in claims:
+                mainsnak = claims[prop_id][0]["mainsnak"]
+                datavalue = mainsnak.get("datavalue", {})
+                if fact_type == "population":
+                    amount = datavalue.get("value", {}).get("amount", "")
+                    return f"The population of {country_name.title()} is approximately {int(float(amount)):,}."
+                elif fact_type == "currency":
+                    currency_id = datavalue.get("value", {}).get("id", "")
+                    label_resp = requests.get(f"https://www.wikidata.org/wiki/Special:EntityData/{currency_id}.json", timeout=10)
+                    label_data = label_resp.json()
+                    label = label_data["entities"][currency_id]["labels"]["en"]["value"]
+                    return f"The currency of {country_name.title()} is the {label}."
+                else:
+                    linked_id = datavalue.get("value", {}).get("id", "")
+                    label_resp = requests.get(f"https://www.wikidata.org/wiki/Special:EntityData/{linked_id}.json", timeout=10)
+                    label_data = label_resp.json()
+                    label = label_data["entities"][linked_id]["labels"]["en"]["value"]
+                    if fact_type == "capital":
+                        return f"The capital of {country_name.title()} is {label}."
+                    elif fact_type == "leader":
+                        return f"The president of {country_name.title()} is {label}."
+            else:
+                return f"Could not find {fact_type} information for {country_name.title()}."
+
+        except Exception as e:
+            return f"Error retrieving factual information: {e}"
+
+    # Fallback: summary from Wikipedia for general questions
+    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{formatted_query}"
+
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+
+        if response.status_code == 200:
+            data = response.json()
+            title = data.get("title", "Unknown title")
+            description = data.get("description", "No description available")
+            summary = data.get("extract", "No summary found.")
+
+            # Optional: shorten summary to 1 sentence
+            short_summary = summary.split(".")[0] + "."
+
+            return f"**{title}** - {description}\n{short_summary}"
+
+        elif response.status_code == 404:
+            return "Wikipedia page not found. Try asking differently."
+
+        else:
+            return f"Error fetching Wikipedia data: {response.status_code}"
 
     except requests.exceptions.RequestException as e:
-        return f"Error fetching data from Wikipedia: {e}"
+        return f"Error fetching data: {e}"
 
-# Improved response generation using AI and web search
+
+
+
 def chatbot_response(user_input):
-    user_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))  # Normalize text
+    user_input_clean = user_input.lower().translate(str.maketrans('', '', string.punctuation))  # Normalize text
 
-    # Tokenization for better recognition
+    # Tokenization
     try:
-        tokens = word_tokenize(user_input)
+        tokens = word_tokenize(user_input_clean)
     except LookupError:
-        tokens = user_input.split()  # Fallback method
+        tokens = user_input_clean.split()
 
-    # Retrieve previous chatbot messages for better response context
-    last_message = get_last_message(user_input)
+    last_message = get_last_message(user_input_clean)
 
     # Handle date-related queries
     if "date" in tokens or "today" in tokens:
         bot_response = f"Today's date is {datetime.now().strftime('%A, %B %d, %Y')}."
-    # Handle factual queries using web search
-    elif any(word in tokens for word in ["capital", "president", "define", "weather"]):
-      bot_response = search_wikipedia(user_input)
+    
+    # Handle factual queries using search_wikipedia
+    elif any(word in tokens for word in ["capital", "president", "population", "currency", "define", "what", "who"]):
+        bot_response = search_wikipedia(user_input)
+    
     else:
-        # AI model generates response dynamically
-        ai_response = chatbot_model(f"User: {user_input}\nChatbot (based on previous message '{last_message}'): ", max_length=100)
+        # Generate AI-based response
+        ai_response = chatbot_model(
+            f"User: {user_input}\nChatbot (based on previous message '{last_message}'): ", 
+            max_length=100
+        )
         bot_response = ai_response[0]["generated_text"].strip()
 
-        # Prevent chatbot from echoing user input directly
-        if bot_response.lower() == user_input.lower():
-            bot_response = "I'm still learning! Can you ask me in a different way?"
+        # Prevent simple echoes
+        if bot_response.lower() == user_input_clean:
+            bot_response = "I'm still learning! Can you ask that another way?"
 
-    # Save conversation history
-    # we don't save the bot response just now for test 
-    # if bot_response != ''
-    # save_to_db(user_input, bot_response)
+    # ✅ Basic quality check before saving this is base on oly a few words
+    # This checks if the bot response contains specific keywords that indicate it's a factual answer.
+    # If it does, it saves the user input and bot response to the database.
+    # This is a simple heuristic and can be improved with more sophisticated checks.
+    keywords_to_save = ["the capital of", "is the president", "the population of", "the currency of"]
+    if any(phrase in bot_response.lower() for phrase in keywords_to_save):
+        save_to_db(user_input, bot_response)
+
     return bot_response
+
+
+
  
 
 
