@@ -36,7 +36,6 @@ chatbot_model = pipeline("text-generation", model="microsoft/DialoGPT-medium")
 def log_error(error):
     print(f"ERROR: {error}")  # Print errors to console for debugging
 
-
 # Create SQLite Database & Table: if chats table does not exist, it creates one with two columns: user_input and bot_response.
 def setup_database():
     conn = sqlite3.connect("chatbot.db")
@@ -215,7 +214,7 @@ def chatbot_response(user_input):
         if bot_response.lower() == user_input_clean:
             bot_response = "I'm still learning! Can you ask that another way?"
 
-    # ✅ Basic quality check before saving this is base on oly a few words
+    # ✅ Basic quality check before saving this is base on only a few words
     # This checks if the bot response contains specific keywords that indicate it's a factual answer.
     # If it does, it saves the user input and bot response to the database.
     # This is a simple heuristic and can be improved with more sophisticated checks.
@@ -224,10 +223,6 @@ def chatbot_response(user_input):
         save_to_db(user_input, bot_response)
 
     return bot_response
-
-
-
- 
 
 
 # Flask Chat Interface (html form  for user input )
@@ -248,20 +243,17 @@ def chat():
         user_input = request.form.get("message", "")
         logging.debug(f"User Input: {user_input}")  # Debugging print
 
-
         if not user_input:
             return "Chatbot: Please type a message."
 
         response = chatbot_response(user_input)
         logging.debug(f"Bot Response: {response}")  # Debugging print
 
-
         return f"Chatbot: {response}"
 
     except Exception as e:
         logging.error(f"Internal Server Error: {e}", exc_info=True)  # Prints full error details
         return "Chatbot: Internal Server Error", 500
-
 
 
 # Run Flask Server
