@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Flask App",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "flask",  // Tell VS Code to launch Flask via "python -m flask"
+            "env": {
+                // Assuming your file is named "chatbot.py" and your Flask instance is "app"
+                "FLASK_APP": "chatbot:app", 
+                "FLASK_DEBUG": "1",      // Enables Flask's built-in debugger and reloader
+                                         // Use "1" for True, "0" for False.
+                // "FLASK_ENV": "development" // Alternative, implies FLASK_DEBUG=1
+            },
+            "args": [
+                "run",
+                "--no-debugger",  // Disable Werkzeug's web-based debugger, use VS Code's debugger instead.
+                "--host=0.0.0.0", // Make server accessible on network
+                "--port=5000"     // Specify the port
+                // "--no-reload" // Optional: if Flask's reloader causes issues with the debugger.
+                                  // Modern debugpy usually handles reloader well. Keep it enabled for convenience.
+            ],
+            "jinja": true,        // Enable Jinja template debugging if you use them.
+            "console": "integratedTerminal",
+            "justMyCode": true    // Set to false if you need to debug into installed libraries.
+        }
+    ]
+}
