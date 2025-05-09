@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# Logs
+*.log
+
+# SQLite database file
+chatbot.db
+
+# IDE/editor settings
+.vscode/
+.idea/
+*.swp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.coverage
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+*.cover
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Cache
+.cache/
+dist/
+build/
+
+# Mac/Linux/Windows hidden files
+*.~lock.*
+*.bak
+*~
+
+# Optional: ignore model files or large data
+*.pt
+*.h5
+*.pkl
