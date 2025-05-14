@@ -63,10 +63,15 @@ def save_to_db(user_input, bot_response):
 # Retrieve last message for context-aware responses from database
 # This function fetches the last bot response from the database to provide context for the next response.
 def get_last_message(user_input):
+    # Normalize for consistency
+    normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
+
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
-    # Select the latest bot response where the user_input matches
-    cursor.execute("SELECT bot_response FROM chats WHERE user_input = ? ORDER BY ROWID DESC LIMIT 1", (user_input,))
+    cursor.execute(
+        "SELECT bot_response FROM chats WHERE user_input = ? ORDER BY ROWID DESC LIMIT 1",
+        (normalized_input,)
+    )
     last_message = cursor.fetchone()
     conn.close()
     return last_message[0] if last_message else ""
@@ -184,45 +189,46 @@ def search_wikipedia(query):
 
 
 def chatbot_response(user_input):
-    user_input_clean = user_input.lower().translate(str.maketrans('', '', string.punctuation))  # Normalize text
+    # Normalize input
+    normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
+
+    # 🔍 Check if response already exists
+    cached_response = get_last_message(normalized_input)
+    if cached_response:
+        return cached_response
 
     # Tokenization
     try:
-        tokens = word_tokenize(user_input_clean)
+        tokens = word_tokenize(normalized_input)
     except LookupError:
-        tokens = user_input_clean.split()
+        tokens = normalized_input.split()
 
-    last_message = get_last_message(user_input_clean)
-
-    # Handle date-related queries
+    # 📅 2. Handle special case: date
     if "date" in tokens or "today" in tokens:
         bot_response = f"Today's date is {datetime.now().strftime('%A, %B %d, %Y')}."
-    
-    # Handle factual queries using search_wikipedia
-    elif any(word in tokens for word in ["capital", "president", "population", "currency", "define", "what", "who"]):
-        bot_response = search_wikipedia(user_input)
-    
+
+    # 🌐 3. Handle factual questions using Wikipedia
+    elif any(word in tokens for word in ["capital", "president", "population", "define", "weather"]):
+        bot_response = search_wikipedia(normalized_input)
+
+    # 💬 4. Use AI model if not a factual question
     else:
-        # Generate AI-based response
+        last_message = get_last_message(normalized_input)
         ai_response = chatbot_model(
-            f"User: {user_input}\nChatbot (based on previous message '{last_message}'): ", 
+            f"User: {normalized_input}\nChatbot (based on previous message '{last_message}'): ",
             max_length=100
         )
         bot_response = ai_response[0]["generated_text"].strip()
 
-        # Prevent simple echoes
-        if bot_response.lower() == user_input_clean:
-            bot_response = "I'm still learning! Can you ask that another way?"
+        if bot_response.lower() == normalized_input:
+            bot_response = "I'm still learning! Can you ask me in a different way?"
 
-    # ✅ Basic quality check before saving this is base on only a few words
-    # This checks if the bot response contains specific keywords that indicate it's a factual answer.
-    # If it does, it saves the user input and bot response to the database.
-    # This is a simple heuristic and can be improved with more sophisticated checks.
-    keywords_to_save = ["the capital of", "is the president", "the population of", "the currency of"]
-    if any(phrase in bot_response.lower() for phrase in keywords_to_save):
-        save_to_db(user_input, bot_response)
+    # 💾 5. Only save if it was NOT retrieved from the DB
+    if bot_response:
+        save_to_db(normalized_input, bot_response)
 
     return bot_response
+
 
 
 # Flask Chat Interface (html form  for user input )
