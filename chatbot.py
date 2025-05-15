@@ -5,12 +5,21 @@ from flask import Flask, request
 import sqlite3
 import string
 import nltk
-import os
 import requests
 from nltk.tokenize import word_tokenize
 from transformers import pipeline
 from datetime import datetime
 import logging
+import traceback
+
+import os
+import openai # first run: install openai ; in not worked: run: python -m pip install openai.
+from openai import OpenAI
+from openai.types.chat import ChatCompletionMessage
+
+
+
+print("Traceback module loaded:", traceback)
 
 # Ensure NLTK loads resources correctly
 nltk.data.path.append(os.path.join(os.getenv("USERPROFILE"), "AppData\\Roaming\\nltk_data"))
@@ -30,8 +39,6 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)  # Prints errors in console
 
 
-# Initialize Hugging Face model: creates a chatbot model that can generate responses based on user input, leveraging DialoGPT’s natural language generation capabilities.
-chatbot_model = pipeline("text-generation", model="microsoft/DialoGPT-medium")
 # Debugging Helper Function
 def log_error(error):
     print(f"ERROR: {error}")  # Print errors to console for debugging
@@ -76,159 +83,63 @@ def get_last_message(user_input):
     conn.close()
     return last_message[0] if last_message else ""
 
-# with Auto Capital Detection for all counytries. and adding more queston like  who is the president
-def search_wikipedia(query):
-    import re
+#
 
-    # Clean and prepare query
-    user_query = query.lower().strip()
-    filtered_query = user_query.replace("what is ", "").replace("who is ", "").replace("tell me about ", "").strip()
-    formatted_query = filtered_query.replace(" ", "_")
+# to check a response from OpenAI API is valid or not
+# This function checks if the response from the OpenAI API is valid by looking for common error messages or keywords.
 
-    # If user asks for capital, population, president, currency, etc.
-    fact_type = None
-    if "capital of" in user_query:
-        fact_type = "capital"
-    elif "population of" in user_query:
-        fact_type = "population"
-    elif "president of" in user_query:
-        fact_type = "leader"
-    elif "currency of" in user_query:
-        fact_type = "currency"
+# ✅ Function to validate chatbot responses
+def is_valid_response(response: str) -> bool:
+    if not response or not response.strip():
+        return False
 
-    # Try to extract country name
-    country_match = re.search(r"of ([a-zA-Z ]+)", user_query)
-    country_name = country_match.group(1).strip() if country_match else filtered_query
+    invalid_keywords = [
+        "something went wrong",
+        "error:",
+        "exception",
+        "traceback",
+        "insufficient_quota",
+        "no longer supported",
+        "invalid request",
+        "you exceeded your quota"
+    ]
+    response_lower = response.lower()
+    return not any(err in response_lower for err in invalid_keywords)
 
-    if fact_type:
-        try:
-            # Query Wikidata API for structured fact
-            wikidata_url = "https://www.wikidata.org/w/api.php"
-            params = {
-                "action": "wbsearchentities",
-                "search": country_name,
-                "language": "en",
-                "format": "json",
-                "type": "item"
-            }
-            resp = requests.get(wikidata_url, params=params, timeout=10)
-            entity_results = resp.json().get("search", [])
-            if not entity_results:
-                return f"Could not find country data for '{country_name}'."
+# ✅ OpenAI client initialization
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-            qid = entity_results[0]["id"]
-
-            # Property IDs for Wikidata
-            property_ids = {
-                "capital": "P36",
-                "population": "P1082",
-                "leader": "P35",
-                "currency": "P38"
-            }
-            prop_id = property_ids.get(fact_type)
-            claims_url = f"https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
-            claims_resp = requests.get(claims_url, timeout=10)
-            entity_data = claims_resp.json()
-            claims = entity_data["entities"][qid]["claims"]
-
-            if prop_id in claims:
-                mainsnak = claims[prop_id][0]["mainsnak"]
-                datavalue = mainsnak.get("datavalue", {})
-                if fact_type == "population":
-                    amount = datavalue.get("value", {}).get("amount", "")
-                    return f"The population of {country_name.title()} is approximately {int(float(amount)):,}."
-                elif fact_type == "currency":
-                    currency_id = datavalue.get("value", {}).get("id", "")
-                    label_resp = requests.get(f"https://www.wikidata.org/wiki/Special:EntityData/{currency_id}.json", timeout=10)
-                    label_data = label_resp.json()
-                    label = label_data["entities"][currency_id]["labels"]["en"]["value"]
-                    return f"The currency of {country_name.title()} is the {label}."
-                else:
-                    linked_id = datavalue.get("value", {}).get("id", "")
-                    label_resp = requests.get(f"https://www.wikidata.org/wiki/Special:EntityData/{linked_id}.json", timeout=10)
-                    label_data = label_resp.json()
-                    label = label_data["entities"][linked_id]["labels"]["en"]["value"]
-                    if fact_type == "capital":
-                        return f"The capital of {country_name.title()} is {label}."
-                    elif fact_type == "leader":
-                        return f"The president of {country_name.title()} is {label}."
-            else:
-                return f"Could not find {fact_type} information for {country_name.title()}."
-
-        except Exception as e:
-            return f"Error retrieving factual information: {e}"
-
-    # Fallback: summary from Wikipedia for general questions
-    url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{formatted_query}"
-
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-
-        if response.status_code == 200:
-            data = response.json()
-            title = data.get("title", "Unknown title")
-            description = data.get("description", "No description available")
-            summary = data.get("extract", "No summary found.")
-
-            # Optional: shorten summary to 1 sentence
-            short_summary = summary.split(".")[0] + "."
-
-            return f"**{title}** - {description}\n{short_summary}"
-
-        elif response.status_code == 404:
-            return "Wikipedia page not found. Try asking differently."
-
-        else:
-            return f"Error fetching Wikipedia data: {response.status_code}"
-
-    except requests.exceptions.RequestException as e:
-        return f"Error fetching data: {e}"
-
-
-
-
-def chatbot_response(user_input):
-    # Normalize input
+# ✅ Main chatbot function
+def chatbot_response(user_input: str) -> str:
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
-
-    # 🔍 Check if response already exists
+    # check if response is already in DB
+    # This function checks if the response for the given user input is already cached in the database.
     cached_response = get_last_message(normalized_input)
     if cached_response:
         return cached_response
 
-    # Tokenization
     try:
-        tokens = word_tokenize(normalized_input)
-    except LookupError:
-        tokens = normalized_input.split()
-
-    # 📅 2. Handle special case: date
-    if "date" in tokens or "today" in tokens:
-        bot_response = f"Today's date is {datetime.now().strftime('%A, %B %d, %Y')}."
-
-    # 🌐 3. Handle factual questions using Wikipedia
-    elif any(word in tokens for word in ["capital", "president", "population", "define", "weather"]):
-        bot_response = search_wikipedia(normalized_input)
-
-    # 💬 4. Use AI model if not a factual question
-    else:
-        last_message = get_last_message(normalized_input)
-        ai_response = chatbot_model(
-            f"User: {normalized_input}\nChatbot (based on previous message '{last_message}'): ",
-            max_length=100
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",  # or "gpt-4" if you have access
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": user_input}
+            ],
+            max_tokens=200,
+            temperature=0.7
         )
-        bot_response = ai_response[0]["generated_text"].strip()
 
-        if bot_response.lower() == normalized_input:
-            bot_response = "I'm still learning! Can you ask me in a different way?"
+        bot_response = response.choices[0].message.content.strip()
 
-    # 💾 5. Only save if it was NOT retrieved from the DB
-    if bot_response:
+    except Exception as e:
+        traceback.print_exc()
+        bot_response = f"Oops! Something went wrong: {str(e)}"
+
+    # ✅ Save to DB only if response is valid
+    if is_valid_response(bot_response):
         save_to_db(normalized_input, bot_response)
 
     return bot_response
-
 
 
 # Flask Chat Interface (html form  for user input )
@@ -275,3 +186,22 @@ if __name__ == "__main__":
     #debugpy.wait_for_client()  # Wait for the debugger to attach before continuing
     print("Waiting for debugger connection...")
     app.run(debug=True, use_reloader=False, use_debugger=False)
+
+
+    # todo:
+    # 1. Add more features like voice recognition, text-to-speech, etc.
+    # 2. Add more error handling and logging
+    # 3. Add more tests and unit tests
+    # 4. Add more documentation and comments
+    # 5. Add more languages and localization
+    # 6. Add more models and frameworks
+    # 7. Add more databases and storage options
+    
+
+# Adding user/session tracking
+
+# #Supporting contextual conversations (chat history)
+
+Logging errors/usage stats for analysis
+
+#Switching to gpt-4 for even better reasoning
