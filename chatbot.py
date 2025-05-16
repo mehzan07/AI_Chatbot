@@ -1,7 +1,7 @@
 # Creating AI Chatbot setp by step
 # Import necessary libraries in chatbot.py:import nltk
 
-from flask import Flask, request
+from flask import Flask, request, make_response
 import sqlite3
 import string
 import nltk
@@ -75,18 +75,18 @@ def save_to_db(session_id, user_input, bot_response):
 
 # Retrieve last message for context-aware responses from database
 # This function fetches the last bot response from the database to provide context for the next response.
-def get_last_message(session_id, user_input):
+def get_last_message(user_input):
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
 
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT bot_response FROM chats 
-        WHERE session_id = ? AND user_input = ? 
-        ORDER BY ROWID DESC LIMIT 1
-    """, (session_id, normalized_input))
+    cursor.execute(
+        "SELECT bot_response FROM chats WHERE user_input = ? ORDER BY ROWID DESC LIMIT 1",
+        (normalized_input,)
+    )
     last_message = cursor.fetchone()
     conn.close()
+
     return last_message[0] if last_message else ""
 
 
@@ -120,7 +120,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def chatbot_response(session_id: str, user_input: str) -> str:
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
 
-    cached_response = get_last_message(session_id, normalized_input)
+    cached_response = get_last_message(normalized_input)
     if cached_response:
         return cached_response
 
@@ -146,13 +146,80 @@ def chatbot_response(session_id: str, user_input: str) -> str:
 
 
 # Flask Chat Interface (html form  for user input )
-# This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form, generates a response using the chatbot_response function, and returns the response to the user.
+# display chat history + input box
+# This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form,
+#  generates a response using the chatbot_response function, and returns the response to the user.
+'''
 @app.route('/')
 def home():
-    return '''<form action="/chat" method="post">
-                <input type="text" name="message" placeholder="Type your message">
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    history = get_conversation_history(session_id)
+
+    history_html = ""
+    for user_msg, bot_msg in history:
+        history_html += f"<p><b>You:</b> {user_msg}</p>"
+        history_html += f"<p><b>Bot:</b> {bot_msg}</p>"
+
+    html = f"""
+        <html>
+            <body>
+                <h2>Chatbot</h2>
+                {history_html}
+                <form action="/chat" method="post">
+                    <input type="text" name="message" placeholder="Type your message" required>
+                    <button type="submit">Send</button>
+                </form>
+            </body>
+        </html>
+    """
+
+    response = make_response(html)
+    response.set_cookie("session_id", session_id)
+    return response
+
+'''
+
+
+@app.route('/', methods=['GET'])
+def home():
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
+
+    history = get_conversation_history(session_id)
+
+    html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
+                .user {{ color: #0066cc; font-weight: bold; }}
+                .bot {{ color: #009933; }}
+                .chat-box {{ border-bottom: 1px solid #ccc; padding: 5px 0; }}
+                input[type="text"] {{ width: 80%; padding: 10px; }}
+                button {{ padding: 10px 15px; }}
+            </style>
+        </head>
+        <body>
+            <h2>Chatbot</h2>
+            {''.join([
+                f'<div class="chat-box"><span class="user">You:</span> {u}<br><span class="bot">Bot:</span> {b}</div>'
+                for u, b in history
+            ])}
+            <form action="/chat" method="post">
+                <input type="text" name="message" placeholder="Type your message" required>
                 <button type="submit">Send</button>
-              </form>'''
+            </form>
+        </body>
+        </html>
+    """
+
+    response = make_response(html)
+    response.set_cookie("session_id", session_id)
+    return response
 
 
 # This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form, 
@@ -161,29 +228,66 @@ from flask import session
 import uuid
 
 app.secret_key = "your_secret_key_here"  # Needed for session support
-
 @app.route('/chat', methods=['POST'])
 def chat():
-    try:
-        user_input = request.form.get("message", "")
-        logging.debug(f"User Input: {user_input}")
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        session_id = str(uuid.uuid4())
 
-        if not user_input:
-            return "Chatbot: Please type a message."
+    user_input = request.form.get("message", "")
+    if not user_input:
+        return "Chatbot: Please enter a message."
 
-        # Assign or retrieve session ID
-        if "session_id" not in session:
-            session["session_id"] = str(uuid.uuid4())
-        session_id = session["session_id"]
+    response = chatbot_response(session_id, user_input)
 
-        response = chatbot_response(session_id, user_input)
-        logging.debug(f"Bot Response: {response}")
+    # Save and reload updated history
+    history = get_conversation_history(session_id)
 
-        return f"Chatbot: {response}"
+    html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
+                .user {{ color: #0066cc; font-weight: bold; }}
+                .bot {{ color: #009933; }}
+                .chat-box {{ border-bottom: 1px solid #ccc; padding: 5px 0; }}
+                input[type="text"] {{ width: 80%; padding: 10px; }}
+                button {{ padding: 10px 15px; }}
+            </style>
+        </head>
+        <body>
+            <h2>Chatbot</h2>
+            {''.join([
+                f'<div class="chat-box"><span class="user">You:</span> {u}<br><span class="bot">Bot:</span> {b}</div>'
+                for u, b in history
+            ])}
+            <form action="/chat" method="post">
+                <input type="text" name="message" placeholder="Type your message" required>
+                <button type="submit">Send</button>
+            </form>
+        </body>
+        </html>
+    """
 
-    except Exception as e:
-        logging.error(f"Internal Server Error: {e}", exc_info=True)
-        return "Chatbot: Internal Server Error", 500
+    response_html = make_response(html)
+    response_html.set_cookie("session_id", session_id)
+    return response_html
+
+
+
+
+#Show Past Messages per Session
+def get_conversation_history(session_id):
+    conn = sqlite3.connect("chatbot.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_input, bot_response FROM chats WHERE session_id = ? ORDER BY ROWID ASC",
+        (session_id,)
+    )
+    messages = cursor.fetchall()
+    conn.close()
+    return messages
+
 
 
 # Run Flask Server
