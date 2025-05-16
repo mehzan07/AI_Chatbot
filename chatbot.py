@@ -43,47 +43,52 @@ logging.basicConfig(level=logging.DEBUG)  # Prints errors in console
 def log_error(error):
     print(f"ERROR: {error}")  # Print errors to console for debugging
 
-# Create SQLite Database & Table: if chats table does not exist, it creates one with two columns: user_input and bot_response.
+# This function sets up the SQLite database and creates a table for storing chat history. with three columns: session_id, user_input and bot_response.
 def setup_database():
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS chats (
+            session_id TEXT,
             user_input TEXT,
             bot_response TEXT
         )
     """)
     conn.commit()
     conn.close()
+# This function sets up the SQLite database and creates a table for storing chat history.
+
 
 # Ensure database exists by calling the setup_database function
 setup_database()  
 
-# Store conversation in SQLite
-def save_to_db(user_input, bot_response):
+# This function saves the user input and bot response to the SQLite database. It takes three parameters: session_id, user_input, and bot_response.
+def save_to_db(session_id, user_input, bot_response):
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO chats (user_input, bot_response) VALUES (?, ?)", (user_input, bot_response))
+    cursor.execute("INSERT INTO chats (session_id, user_input, bot_response) VALUES (?, ?, ?)",
+                   (session_id, user_input, bot_response))
     conn.commit()
     conn.close()
 
+
+
 # Retrieve last message for context-aware responses from database
 # This function fetches the last bot response from the database to provide context for the next response.
-def get_last_message(user_input):
-    # Normalize for consistency
+def get_last_message(session_id, user_input):
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
 
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT bot_response FROM chats WHERE user_input = ? ORDER BY ROWID DESC LIMIT 1",
-        (normalized_input,)
-    )
+    cursor.execute("""
+        SELECT bot_response FROM chats 
+        WHERE session_id = ? AND user_input = ? 
+        ORDER BY ROWID DESC LIMIT 1
+    """, (session_id, normalized_input))
     last_message = cursor.fetchone()
     conn.close()
     return last_message[0] if last_message else ""
 
-#
 
 # to check a response from OpenAI API is valid or not
 # This function checks if the response from the OpenAI API is valid by looking for common error messages or keywords.
@@ -110,17 +115,18 @@ def is_valid_response(response: str) -> bool:
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ✅ Main chatbot function
-def chatbot_response(user_input: str) -> str:
+# This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form, generates a response using the chatbot_response function, and returns the response to the user.
+
+def chatbot_response(session_id: str, user_input: str) -> str:
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
-    # check if response is already in DB
-    # This function checks if the response for the given user input is already cached in the database.
-    cached_response = get_last_message(normalized_input)
+
+    cached_response = get_last_message(session_id, normalized_input)
     if cached_response:
         return cached_response
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # or "gpt-4" if you have access
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": user_input}
@@ -128,16 +134,13 @@ def chatbot_response(user_input: str) -> str:
             max_tokens=200,
             temperature=0.7
         )
-
         bot_response = response.choices[0].message.content.strip()
-
     except Exception as e:
         traceback.print_exc()
         bot_response = f"Oops! Something went wrong: {str(e)}"
 
-    # ✅ Save to DB only if response is valid
     if is_valid_response(bot_response):
-        save_to_db(normalized_input, bot_response)
+        save_to_db(session_id, normalized_input, bot_response)
 
     return bot_response
 
@@ -152,24 +155,34 @@ def home():
               </form>'''
 
 
-# This defines a route for /chat, and it specifically allows POST requests.
-# When a user submits the form, the data is sent to this endpoint, where the chatbot processes the input and generates a response.
+# This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form, 
+# generates a response using the chatbot_response function, and returns the response to the user.
+from flask import session
+import uuid
+
+app.secret_key = "your_secret_key_here"  # Needed for session support
+
 @app.route('/chat', methods=['POST'])
 def chat():
     try:
         user_input = request.form.get("message", "")
-        logging.debug(f"User Input: {user_input}")  # Debugging print
+        logging.debug(f"User Input: {user_input}")
 
         if not user_input:
             return "Chatbot: Please type a message."
 
-        response = chatbot_response(user_input)
-        logging.debug(f"Bot Response: {response}")  # Debugging print
+        # Assign or retrieve session ID
+        if "session_id" not in session:
+            session["session_id"] = str(uuid.uuid4())
+        session_id = session["session_id"]
+
+        response = chatbot_response(session_id, user_input)
+        logging.debug(f"Bot Response: {response}")
 
         return f"Chatbot: {response}"
 
     except Exception as e:
-        logging.error(f"Internal Server Error: {e}", exc_info=True)  # Prints full error details
+        logging.error(f"Internal Server Error: {e}", exc_info=True)
         return "Chatbot: Internal Server Error", 500
 
 
@@ -188,20 +201,23 @@ if __name__ == "__main__":
     app.run(debug=True, use_reloader=False, use_debugger=False)
 
 
-    # todo:
-    # 1. Add more features like voice recognition, text-to-speech, etc.
-    # 2. Add more error handling and logging
-    # 3. Add more tests and unit tests
-    # 4. Add more documentation and comments
-    # 5. Add more languages and localization
-    # 6. Add more models and frameworks
-    # 7. Add more databases and storage options
-    
+# Todo:
 
-# Adding user/session tracking
+#Chat history display
 
-# #Supporting contextual conversations (chat history)
+#Multi-language support
 
-Logging errors/usage stats for analysis
+# Persistent user memory
 
-#Switching to gpt-4 for even better reasoning
+#Voice input/output
+
+
+# 1 Adding user/session tracking: done
+# 2 Add more languages and localization
+# 3 Supporting contextual conversations (chat history)
+# 4 Logging errors/usage stats for analysis
+
+# 5 Switching to gpt-4 for even better reasoning
+# 6 Add more tests and unit tests
+# 7  Add more features like voice recognition, text-to-speech, etc.
+# 8 Add more documentation and comments
