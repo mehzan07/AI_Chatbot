@@ -146,43 +146,7 @@ def chatbot_response(session_id: str, user_input: str) -> str:
 
 
 # Flask Chat Interface (html form  for user input )
-# display chat history + input box
-# This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form,
-#  generates a response using the chatbot_response function, and returns the response to the user.
-'''
-@app.route('/')
-def home():
-    session_id = request.cookies.get("session_id")
-    if not session_id:
-        session_id = str(uuid.uuid4())
-
-    history = get_conversation_history(session_id)
-
-    history_html = ""
-    for user_msg, bot_msg in history:
-        history_html += f"<p><b>You:</b> {user_msg}</p>"
-        history_html += f"<p><b>Bot:</b> {bot_msg}</p>"
-
-    html = f"""
-        <html>
-            <body>
-                <h2>Chatbot</h2>
-                {history_html}
-                <form action="/chat" method="post">
-                    <input type="text" name="message" placeholder="Type your message" required>
-                    <button type="submit">Send</button>
-                </form>
-            </body>
-        </html>
-    """
-
-    response = make_response(html)
-    response.set_cookie("session_id", session_id)
-    return response
-
-'''
-
-
+# This function handles incoming requests to the / endpoint. It retrieves the user input from the form, generates a response using the chatbot_response function, and returns the response to the user.
 @app.route('/', methods=['GET'])
 def home():
     session_id = request.cookies.get("session_id")
