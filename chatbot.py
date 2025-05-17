@@ -64,6 +64,7 @@ setup_database()
 
 # This function saves the user input and bot response to the SQLite database. It takes three parameters: session_id, user_input, and bot_response.
 def save_to_db(session_id, user_input, bot_response):
+    
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
     cursor.execute("INSERT INTO chats (session_id, user_input, bot_response) VALUES (?, ?, ?)",
@@ -121,6 +122,7 @@ def chatbot_response(session_id: str, user_input: str) -> str:
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
 
     cached_response = get_last_message(normalized_input)
+
     if cached_response:
         return cached_response
 
@@ -142,47 +144,45 @@ def chatbot_response(session_id: str, user_input: str) -> str:
     if is_valid_response(bot_response):
         save_to_db(session_id, normalized_input, bot_response)
 
+        
+
     return bot_response
 
 
 # Flask Chat Interface (html form  for user input )
 # This function handles incoming requests to the / endpoint. It retrieves the user input from the form, generates a response using the chatbot_response function, and returns the response to the user.
-@app.route('/', methods=['GET'])
+from flask import Flask, request, make_response, redirect
+
+@app.route("/", methods=["GET"])
 def home():
     session_id = request.cookies.get("session_id")
     if not session_id:
         session_id = str(uuid.uuid4())
-
-    history = get_conversation_history(session_id)
 
     html = f"""
         <html>
         <head>
             <style>
                 body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
-                .user {{ color: #0066cc; font-weight: bold; }}
-                .bot {{ color: #009933; }}
-                .chat-box {{ border-bottom: 1px solid #ccc; padding: 5px 0; }}
                 input[type="text"] {{ width: 80%; padding: 10px; }}
-                button {{ padding: 10px 15px; }}
+                button {{ padding: 10px 15px; margin-top: 10px; }}
             </style>
         </head>
         <body>
             <h2>Chatbot</h2>
-            {''.join([
-                f'<div class="chat-box"><span class="user">You:</span> {u}<br><span class="bot">Bot:</span> {b}</div>'
-                for u, b in history
-            ])}
             <form action="/chat" method="post">
                 <input type="text" name="message" placeholder="Type your message" required>
                 <button type="submit">Send</button>
+            </form>
+            <form action="/history" method="get">
+                <button type="submit">Show History</button>
             </form>
         </body>
         </html>
     """
 
     response = make_response(html)
-    response.set_cookie("session_id", session_id)
+    response.set_cookie("session_id", session_id, max_age=60*60*24*7)
     return response
 
 
@@ -192,7 +192,7 @@ from flask import session
 import uuid
 
 app.secret_key = "your_secret_key_here"  # Needed for session support
-@app.route('/chat', methods=['POST'])
+@app.route("/chat", methods=["POST"])
 def chat():
     session_id = request.cookies.get("session_id")
     if not session_id:
@@ -200,12 +200,9 @@ def chat():
 
     user_input = request.form.get("message", "")
     if not user_input:
-        return "Chatbot: Please enter a message."
+        return redirect("/")
 
-    response = chatbot_response(session_id, user_input)
-
-    # Save and reload updated history
-    history = get_conversation_history(session_id)
+    bot_reply = chatbot_response(session_id, user_input)
 
     html = f"""
         <html>
@@ -214,31 +211,62 @@ def chat():
                 body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
                 .user {{ color: #0066cc; font-weight: bold; }}
                 .bot {{ color: #009933; }}
-                .chat-box {{ border-bottom: 1px solid #ccc; padding: 5px 0; }}
-                input[type="text"] {{ width: 80%; padding: 10px; }}
-                button {{ padding: 10px 15px; }}
+                .chat-box {{ border-bottom: 1px solid #ccc; padding: 10px 0; }}
+                button {{ padding: 10px 15px; margin-top: 10px; }}
             </style>
         </head>
         <body>
             <h2>Chatbot</h2>
-            {''.join([
-                f'<div class="chat-box"><span class="user">You:</span> {u}<br><span class="bot">Bot:</span> {b}</div>'
-                for u, b in history
-            ])}
-            <form action="/chat" method="post">
-                <input type="text" name="message" placeholder="Type your message" required>
-                <button type="submit">Send</button>
+            <div class="chat-box">
+                <span class="user">You:</span> {user_input}<br>
+                <span class="bot">Bot:</span> {bot_reply}
+            </div>
+            <form action="/" method="get">
+                <button type="submit">New Question</button>
+            </form>
+            <form action="/history" method="get">
+                <button type="submit">Show History</button>
             </form>
         </body>
         </html>
     """
-
-    response_html = make_response(html)
-    response_html.set_cookie("session_id", session_id)
-    return response_html
-
+    response = make_response(html)
+    response.set_cookie("session_id", session_id, max_age=60*60*24*7)
+    return response
 
 
+# This function retrieves the conversation history for a given session ID from the SQLite database.
+@app.route("/history", methods=["GET"])
+def show_history():
+    session_id = request.cookies.get("session_id")
+    history = get_conversation_history(session_id)
+
+    chat_history_html = "".join([
+        f'<div class="chat-box"><span class="user">You:</span> {u}<br><span class="bot">Bot:</span> {b}</div>'
+        for u, b in history
+    ])
+
+    html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
+                .user {{ color: #0066cc; font-weight: bold; }}
+                .bot {{ color: #009933; }}
+                .chat-box {{ border-bottom: 1px solid #ccc; padding: 10px 0; }}
+                button {{ padding: 10px 15px; margin-top: 10px; }}
+            </style>
+        </head>
+        <body>
+            <h2>Chat History</h2>
+            {chat_history_html}
+            <form action="/" method="get">
+                <button type="submit">New Question</button>
+            </form>
+        </body>
+        </html>
+    """
+    return html
 
 #Show Past Messages per Session
 def get_conversation_history(session_id):
