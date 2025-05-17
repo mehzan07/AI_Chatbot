@@ -147,9 +147,37 @@ def chatbot_response(session_id: str, user_input: str) -> str:
         bot_response = f"Oops! Something went wrong: {str(e)}"
 
     if is_valid_response(bot_response):
-        save_to_db(session_id, normalized_input, bot_response)    
-
+    if looks_like_datetime_response(bot_response):
+        print(f"[INFO] Skipped saving datetime-related response: '{bot_response}'")
+    else:
+        save_to_db(session_id, normalized_input, bot_response)
     return bot_response
+
+# This function checks if the response from the OpenAI API is valid by looking for common error messages or keywords.
+# This function checks if the response contains date/time-like content. It uses a list of keywords and regex patterns to identify such content.
+import re
+
+
+def looks_like_datetime_response(response: str) -> bool:
+    """Rudimentary check to see if response contains date/time-like content."""
+    response = response.lower()
+
+    date_keywords = [
+        "today is", "current date", "the date is", "it's", "time is", 
+        "now is", "day is", "friday", "saturday", "sunday", "monday", 
+        "january", "february", "march", "april", "may", "june", 
+        "july", "august", "september", "october", "november", "december", "right now", "the time now", "month of", 
+        "mon", "tue"
+    ]
+
+    # Optionally match numeric dates: e.g. 16 May 2025, 2025-05-16
+    if re.search(r"\b\d{1,2} (january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\b", response):
+        return True
+    if re.search(r"\b\d{4}-\d{2}-\d{2}\b", response):
+        return True
+
+    return any(kw in response for kw in date_keywords)
+
 
 
 # Flask Chat Interface (html form  for user input )
@@ -333,6 +361,7 @@ if __name__ == "__main__":
 
 
 # Todo:
+# date time related input shall be not handled by opeai it should be fixed
 
 #Chat history display : done
 
