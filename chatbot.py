@@ -124,13 +124,12 @@ def chatbot_response(session_id: str, user_input: str) -> str:
     # ✅ Intercept datetime questions before any DB or API calls
     datetime_answer = detect_datetime_question(user_input)
     if datetime_answer:
-        return datetime_answer
+     print(f"[INFO] Handled as datetime response: {datetime_answer}")
+     return datetime_answer
 
     cached_response = get_last_message(normalized_input)
-
     if cached_response:
-        return cached_response
-
+     return cached_response
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -146,37 +145,41 @@ def chatbot_response(session_id: str, user_input: str) -> str:
         traceback.print_exc()
         bot_response = f"Oops! Something went wrong: {str(e)}"
 
-    if is_valid_response(bot_response):
-    if looks_like_datetime_response(bot_response):
-        print(f"[INFO] Skipped saving datetime-related response: '{bot_response}'")
-    else:
-        save_to_db(session_id, normalized_input, bot_response)
-    return bot_response
+    if is_valid_response(bot_response) \
+    and not detect_datetime_question(user_input) \
+    and not looks_like_datetime_response(bot_response):
+    
+     save_to_db(session_id, normalized_input, bot_response)
 
 # This function checks if the response from the OpenAI API is valid by looking for common error messages or keywords.
 # This function checks if the response contains date/time-like content. It uses a list of keywords and regex patterns to identify such content.
+
 import re
-
-
+# This function checks if the response contains date/time-like content. It uses a list of keywords and regex patterns to identify such content.
 def looks_like_datetime_response(response: str) -> bool:
-    """Rudimentary check to see if response contains date/time-like content."""
     response = response.lower()
 
-    date_keywords = [
-        "today is", "current date", "the date is", "it's", "time is", 
-        "now is", "day is", "friday", "saturday", "sunday", "monday", 
-        "january", "february", "march", "april", "may", "june", 
-        "july", "august", "september", "october", "november", "december", "right now", "the time now", "month of", 
-        "mon", "tue"
+    # Regex: look for very specific datetime phrases or formats
+    datetime_patterns = [
+        r"\btoday is\b",
+        r"\bcurrent date\b",
+        r"\bthe date is\b",
+        r"\bnow is\b",
+        r"\btime is\b",
+        r"\b\d{4}-\d{2}-\d{2}\b",  # e.g., 2025-05-17
+        r"\b\d{1,2} (january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\b",
+        r"\bit's (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+        r"\bthis month is\b",
+        r"\bthe month is\b",
+        r"\btoday\b",
+        r"\bthis year\b",
+        r"\bthis week\b"
     ]
 
-    # Optionally match numeric dates: e.g. 16 May 2025, 2025-05-16
-    if re.search(r"\b\d{1,2} (january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\b", response):
-        return True
-    if re.search(r"\b\d{4}-\d{2}-\d{2}\b", response):
-        return True
-
-    return any(kw in response for kw in date_keywords)
+    for pattern in datetime_patterns:
+        if re.search(pattern, response):
+            return True
+    return False
 
 
 
@@ -314,33 +317,25 @@ def get_conversation_history(session_id):
 # This function is designed to detect and respond to common datetime-related questions without using the OpenAI API 
 # and without saving the response to the database.
 from datetime import datetime, timedelta
+
 def detect_datetime_question(user_input: str) -> str | None:
-    """Handle common datetime-related questions manually."""
-    input_lower = user_input.lower()
+    text = user_input.lower()
 
-    if "date" in input_lower and "today" in input_lower:
-        return f"Today's date is {datetime.now().strftime('%d %B %Y')}."
+    if any(kw in text for kw in ["what time", "current time", "now", "time is it"]):
+        return f"The current time is {datetime.now().strftime('%H:%M:%S')}."
 
-    if "time" in input_lower or "clock" in input_lower:
-        return f"The current time is {datetime.now().strftime('%H:%M')}."
+    if any(kw in text for kw in ["what's the date", "what is the date", "current date", "today's date", "what date is it", "which date"]):
+        return f"Today's date is {datetime.now().strftime('%Y-%m-%d')}."
 
-    if "day" in input_lower and "today" in input_lower:
+    if any(kw in text for kw in ["which month", "what month", "current month", "month is this"]):
+        return f"This month is {datetime.now().strftime('%B')}."
+
+    if any(kw in text for kw in ["which day", "what day", "day is it", "current day", "today"]):
         return f"Today is {datetime.now().strftime('%A')}."
 
-    if "yesterday" in input_lower:
-        return f"Yesterday was { (datetime.now() - timedelta(days=1)).strftime('%A, %d %B %Y') }."
+    if any(kw in text for kw in ["which year", "what year", "current year", "year is this"]):
+        return f"This year is {datetime.now().strftime('%Y')}."
 
-    if "tomorrow" in input_lower:
-        return f"Tomorrow will be { (datetime.now() + timedelta(days=1)).strftime('%A, %d %B %Y') }."
-
-    if "week" in input_lower:
-        return f"This week is week {datetime.now().isocalendar()[1]} of the year."
-
-    if "month" in input_lower and "current" in input_lower:
-        return f"The current month is {datetime.now().strftime('%B')}."
-
-    # Add more custom logic if needed (e.g., "noon", "evening", "this morning", etc.)
-    
     return None
 
 
