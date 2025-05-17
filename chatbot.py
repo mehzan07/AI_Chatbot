@@ -121,6 +121,11 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def chatbot_response(session_id: str, user_input: str) -> str:
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
 
+    # ✅ Intercept datetime questions before any DB or API calls
+    datetime_answer = detect_datetime_question(user_input)
+    if datetime_answer:
+        return datetime_answer
+
     cached_response = get_last_message(normalized_input)
 
     if cached_response:
@@ -142,9 +147,7 @@ def chatbot_response(session_id: str, user_input: str) -> str:
         bot_response = f"Oops! Something went wrong: {str(e)}"
 
     if is_valid_response(bot_response):
-        save_to_db(session_id, normalized_input, bot_response)
-
-        
+        save_to_db(session_id, normalized_input, bot_response)    
 
     return bot_response
 
@@ -180,7 +183,6 @@ def home():
         </body>
         </html>
     """
-
     response = make_response(html)
     response.set_cookie("session_id", session_id, max_age=60*60*24*7)
     return response
@@ -281,6 +283,39 @@ def get_conversation_history(session_id):
     return messages
 
 
+# This function is designed to detect and respond to common datetime-related questions without using the OpenAI API 
+# and without saving the response to the database.
+from datetime import datetime, timedelta
+def detect_datetime_question(user_input: str) -> str | None:
+    """Handle common datetime-related questions manually."""
+    input_lower = user_input.lower()
+
+    if "date" in input_lower and "today" in input_lower:
+        return f"Today's date is {datetime.now().strftime('%d %B %Y')}."
+
+    if "time" in input_lower or "clock" in input_lower:
+        return f"The current time is {datetime.now().strftime('%H:%M')}."
+
+    if "day" in input_lower and "today" in input_lower:
+        return f"Today is {datetime.now().strftime('%A')}."
+
+    if "yesterday" in input_lower:
+        return f"Yesterday was { (datetime.now() - timedelta(days=1)).strftime('%A, %d %B %Y') }."
+
+    if "tomorrow" in input_lower:
+        return f"Tomorrow will be { (datetime.now() + timedelta(days=1)).strftime('%A, %d %B %Y') }."
+
+    if "week" in input_lower:
+        return f"This week is week {datetime.now().isocalendar()[1]} of the year."
+
+    if "month" in input_lower and "current" in input_lower:
+        return f"The current month is {datetime.now().strftime('%B')}."
+
+    # Add more custom logic if needed (e.g., "noon", "evening", "this morning", etc.)
+    
+    return None
+
+
 
 # Run Flask Server
 # This line checks if the script is being run directly (not imported as a module). If it is, it starts the Flask web server.
@@ -299,7 +334,7 @@ if __name__ == "__main__":
 
 # Todo:
 
-#Chat history display
+#Chat history display : done
 
 #Multi-language support
 
