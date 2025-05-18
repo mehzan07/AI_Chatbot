@@ -44,6 +44,10 @@ build/
 *.~lock.*
 *.bak
 *~
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
 
 # Optional: ignore model files or large data
 *.pt
