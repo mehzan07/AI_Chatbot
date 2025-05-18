@@ -1,29 +1,44 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
         {
-            "name": "Python: Flask App",
+            "name": "Python: Flask App (Debug)",
             "type": "debugpy",
             "request": "launch",
-            "module": "flask",  // Tell VS Code to launch Flask via "python -m flask"
+            "module": "flask",
             "env": {
-                // Assuming your file is named "chatbot.py" and your Flask instance is "app"
-                "FLASK_APP": "chatbot:app", 
-                "FLASK_DEBUG": "1",      // Enables Flask's built-in debugger and reloader
-                                         // Use "1" for True, "0" for False.
-                // "FLASK_ENV": "development" // Alternative, implies FLASK_DEBUG=1
+                "FLASK_APP": "chatbot:app",
+                "FLASK_DEBUG": "1"
             },
             "args": [
                 "run",
-                "--no-debugger",  // Disable Werkzeug's web-based debugger, use VS Code's debugger instead.
-                "--host=0.0.0.0", // Make server accessible on network
-                "--port=5000"     // Specify the port
-                // "--no-reload" // Optional: if Flask's reloader causes issues with the debugger.
-                                  // Modern debugpy usually handles reloader well. Keep it enabled for convenience.
+                "--no-debugger",
+                "--host=0.0.0.0",
+                "--port=5000"
             ],
-            "jinja": true,        // Enable Jinja template debugging if you use them.
+            "jinja": true,
             "console": "integratedTerminal",
-            "justMyCode": true    // Set to false if you need to debug into installed libraries.
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Flask App (No Debug)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "flask",
+            "env": {
+                "FLASK_APP": "chatbot:app",
+                "FLASK_DEBUG": "0"
+            },
+            "args": [
+                "run",
+                "--no-debugger",
+                "--host=0.0.0.0",
+                "--port=5000"
+            ],
+            "noDebug": true,
+            "jinja": true,
+            "console": "integratedTerminal"
         }
     ]
 }
