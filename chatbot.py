@@ -62,15 +62,26 @@ def setup_database():
 # Ensure database exists by calling the setup_database function
 setup_database()  
 
-# This function saves the user input and bot response to the SQLite database. It takes three parameters: session_id, user_input, and bot_response.
+
+
+# This function retrieves the last bot response from the database to provide context for the next response.
+# It takes the user input as a parameter, normalizes it, and queries the database for the last bot response.from datetime import datetime
+import sqlite3
+
 def save_to_db(session_id, user_input, bot_response):
-    
-    conn = sqlite3.connect("chatbot.db")
+    conn = sqlite3.connect("your_database.db")  # Replace with actual path
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO chats (session_id, user_input, bot_response) VALUES (?, ?, ?)",
-                   (session_id, user_input, bot_response))
+
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    cursor.execute("""
+        INSERT INTO chats (session_id, user_input, bot_response, timestamp)
+        VALUES (?, ?, ?, ?)
+    """, (session_id, user_input, bot_response, current_time))
+
     conn.commit()
     conn.close()
+
 
 
 
@@ -221,10 +232,14 @@ def home():
 
 # This function handles incoming requests to the /chat endpoint. It retrieves the user input from the form, 
 # generates a response using the chatbot_response function, and returns the response to the user.
-from flask import session
-import uuid
 
 app.secret_key = "your_secret_key_here"  # Needed for session support
+
+from flask import session
+from flask import request, make_response, redirect
+import uuid
+from chatbot import chatbot_response  
+
 @app.route("/chat", methods=["POST"])
 def chat():
     session_id = request.cookies.get("session_id")
@@ -233,7 +248,7 @@ def chat():
 
     user_input = request.form.get("message", "")
     if not user_input:
-        return redirect("/")
+        return redirect("/")  # No message submitted, go back to home
 
     bot_reply = chatbot_response(session_id, user_input)
 
@@ -251,8 +266,8 @@ def chat():
         <body>
             <h2>Chatbot</h2>
             <div class="chat-box">
-                <span class="user">You:</span> {user_input}<br>
-                <span class="bot">Bot:</span> {bot_reply}
+                <div class="user">You: {user_input}</div>
+                <div class="bot">Bot: {bot_reply}</div>
             </div>
             <form action="/" method="get">
                 <button type="submit">New Question</button>
@@ -263,50 +278,19 @@ def chat():
         </body>
         </html>
     """
+
     response = make_response(html)
-    response.set_cookie("session_id", session_id, max_age=60*60*24*7)
+    response.set_cookie("session_id", session_id, max_age=60 * 60 * 24 * 7)  # 1 week
     return response
 
-
-# This function retrieves the conversation history for a given session ID from the SQLite database.
-@app.route("/history", methods=["GET"])
-def show_history():
-    session_id = request.cookies.get("session_id")
-    history = get_conversation_history(session_id)
-
-    chat_history_html = "".join([
-        f'<div class="chat-box"><span class="user">You:</span> {u}<br><span class="bot">Bot:</span> {b}</div>'
-        for u, b in history
-    ])
-
-    html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
-                .user {{ color: #0066cc; font-weight: bold; }}
-                .bot {{ color: #009933; }}
-                .chat-box {{ border-bottom: 1px solid #ccc; padding: 10px 0; }}
-                button {{ padding: 10px 15px; margin-top: 10px; }}
-            </style>
-        </head>
-        <body>
-            <h2>Chat History</h2>
-            {chat_history_html}
-            <form action="/" method="get">
-                <button type="submit">New Question</button>
-            </form>
-        </body>
-        </html>
-    """
-    return html
-
 #Show Past Messages per Session
+# This function checks if the user input contains common datetime-related keywords and returns a predefined response.
+
 def get_conversation_history(session_id):
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT user_input, bot_response FROM chats WHERE session_id = ? ORDER BY ROWID ASC",
+        "SELECT user_input, bot_response, timestamp FROM chats WHERE session_id = ? ORDER BY ROWID ASC",
         (session_id,)
     )
     messages = cursor.fetchall()
@@ -337,6 +321,48 @@ def detect_datetime_question(user_input: str) -> str | None:
         return f"This year is {datetime.now().strftime('%Y')}."
 
     return None
+
+@app.route("/history", methods=["GET"])
+def history():
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        return redirect("/")
+
+    history = get_conversation_history(session_id)
+
+    history_html = ""
+    for user_input, bot_response, timestamp in history:
+        history_html += f"""
+            <div class="chat-box">
+                <div><strong>[{timestamp}]</strong></div>
+                <div class="user">You: {user_input}</div>
+                <div class="bot">Bot: {bot_response}</div>
+            </div>
+        """
+
+    html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }}
+                .user {{ color: #0066cc; font-weight: bold; }}
+                .bot {{ color: #009933; }}
+                .chat-box {{ border-bottom: 1px solid #ccc; padding: 10px 0; }}
+                button {{ padding: 10px 15px; margin-top: 10px; }}
+            </style>
+        </head>
+        <body>
+            <h2>Chat History</h2>
+            {history_html}
+            <form action="/" method="get">
+                <button type="submit">New Question</button>
+            </form>
+        </body>
+        </html>
+    """
+
+    return html
+
 
 
 
