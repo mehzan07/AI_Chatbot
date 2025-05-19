@@ -3,6 +3,7 @@
 
 from flask import Flask, request, make_response
 import sqlite3
+
 import string
 import nltk
 import requests
@@ -11,7 +12,9 @@ from transformers import pipeline
 from datetime import datetime
 import logging
 import traceback
+from langdetect import detect # first run: install langdetect ; in not worked: run: python -m pip install langdetect.
 
+import langid # first run: install langid ; in not worked: run: python -m pip install langid.
 import os
 import openai # first run: install openai ; in not worked: run: python -m pip install openai.
 from openai import OpenAI
@@ -63,23 +66,20 @@ def setup_database():
 setup_database()  
 
 
+# This function saves the chat history to the SQLite database. It takes the session ID, user input, bot response, and language as parameters.
 
-# This function retrieves the last bot response from the database to provide context for the next response.
-# It takes the user input as a parameter, normalizes it, and queries the database for the last bot response.from datetime import datetime
-import sqlite3
+def save_to_db(session_id, user_input, bot_response, language):
+    normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
+    print(f"Normalized input for DB lookup: {normalized_input}")
 
-def save_to_db(session_id, user_input, bot_response):
-    conn = sqlite3.connect("your_database.db")  # Replace with actual path
-    cursor = conn.cursor()
-
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    cursor.execute("""
-        INSERT INTO chats (session_id, user_input, bot_response, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (session_id, user_input, bot_response, current_time))
-
-    conn.commit()
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect("chatbot.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO chats (session_id, user_input, bot_response, timestamp,language) VALUES (?, ?, ?, ?, ?)",
+            (session_id, normalized_input, bot_response, timestamp, language)
+        )
+        conn.commit()
     conn.close()
 
 
@@ -89,6 +89,7 @@ def save_to_db(session_id, user_input, bot_response):
 # This function fetches the last bot response from the database to provide context for the next response.
 def get_last_message(user_input):
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
+    print(f"Normalized input for DB lookup: {normalized_input}")
 
     conn = sqlite3.connect("chatbot.db")
     cursor = conn.cursor()
@@ -96,10 +97,11 @@ def get_last_message(user_input):
         "SELECT bot_response FROM chats WHERE user_input = ? ORDER BY ROWID DESC LIMIT 1",
         (normalized_input,)
     )
-    last_message = cursor.fetchone()
+    result = cursor.fetchone()
     conn.close()
 
-    return last_message[0] if last_message else ""
+    return result[0] if result else None
+
 
 
 # to check a response from OpenAI API is valid or not
@@ -131,6 +133,26 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def chatbot_response(session_id: str, user_input: str) -> str:
     normalized_input = user_input.lower().translate(str.maketrans('', '', string.punctuation))
+    print(f"Normalized input for DB lookup: {normalized_input}")
+
+
+    # ➕ Common phrases for language detection
+    COMMON_PHRASES = {
+        "vad heter du": "sv",
+        "hur mår du": "sv",
+        "nasılsın": "tr",
+        "كيف حالك": "ar",
+        "چطوری؟": "fa"
+    }
+    text = user_input.strip().lower()
+    language = COMMON_PHRASES.get(text, detect(user_input))  # fallback to automatic detection
+
+
+    # ➕ Detect language
+    # This function detects the language of the user input using the langdetect library.
+    #language = detect(user_input) 
+    language, _ = langid.classify(user_input) #_ is a convention for "we don't care about this value" — in this case, the confidence score.
+    print(f"[INFO] Detected language: {language}")
 
     # ✅ Intercept datetime questions before any DB or API calls
     datetime_answer = detect_datetime_question(user_input)
@@ -142,6 +164,20 @@ def chatbot_response(session_id: str, user_input: str) -> str:
     if cached_response:
      return cached_response
     try:
+        # ➕ Use language-specific prompt
+        # This function uses a dictionary to map language codes to specific system prompts.
+        language_prompts = {
+            "en": "You are a helpful assistant.",
+            "ar": "أنت مساعد ذكي وودود.",
+            "tr": "Sen yardımsever bir asistansın.",
+            "sv": "Du är en hjälpsam assistent.",
+            "fa": "شما یک دستیار مفید هستید."
+        }
+        system_prompt = language_prompts.get(language, language_prompts["en"])
+
+
+        # ➕ Generate response using OpenAI API
+        # This function generates a response using the OpenAI API. It takes the user input and the session ID as parameters.
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -159,8 +195,11 @@ def chatbot_response(session_id: str, user_input: str) -> str:
     if is_valid_response(bot_response) \
     and not detect_datetime_question(user_input) \
     and not looks_like_datetime_response(bot_response):
-    
-     save_to_db(session_id, normalized_input, bot_response)
+     
+     language, _ = langid.classify(user_input)  
+     save_to_db(session_id, normalized_input, bot_response, language)
+
+    return bot_response
 
 # This function checks if the response from the OpenAI API is valid by looking for common error messages or keywords.
 # This function checks if the response contains date/time-like content. It uses a list of keywords and regex patterns to identify such content.
@@ -251,6 +290,11 @@ def chat():
         return redirect("/")  # No message submitted, go back to home
 
     bot_reply = chatbot_response(session_id, user_input)
+    if not bot_reply:
+     bot_reply = "Förlåt, jag har inget svar på det just nu."
+
+    print("DEBUG - Bot reply:", bot_reply)  # ← Lägg till för felsökning
+    
 
     html = f"""
         <html>
@@ -284,16 +328,17 @@ def chat():
     return response
 
 #Show Past Messages per Session
-# This function checks if the user input contains common datetime-related keywords and returns a predefined response.
-
+# This function retrieves the conversation history from the SQLite database for a given session ID.
 def get_conversation_history(session_id):
-    conn = sqlite3.connect("chatbot.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT user_input, bot_response, timestamp FROM chats WHERE session_id = ? ORDER BY ROWID ASC",
-        (session_id,)
-    )
-    messages = cursor.fetchall()
+    with sqlite3.connect("chatbot.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_input, bot_response, timestamp, language
+            FROM chats
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        """, (session_id,))
+        return cursor.fetchall()
     conn.close()
     return messages
 
@@ -331,10 +376,11 @@ def history():
     history = get_conversation_history(session_id)
 
     history_html = ""
-    for user_input, bot_response, timestamp in history:
+    for user_input, bot_response, timestamp, language in history:
+        lang_display = language.upper() if language else "??"
         history_html += f"""
             <div class="chat-box">
-                <div><strong>[{timestamp}]</strong></div>
+                <div><strong>[{timestamp}] [{lang_display}]</strong></div>
                 <div class="user">You: {user_input}</div>
                 <div class="bot">Bot: {bot_response}</div>
             </div>
@@ -362,6 +408,7 @@ def history():
     """
 
     return html
+
 
 
 
@@ -402,3 +449,10 @@ if __name__ == "__main__":
 # 6 Add more tests and unit tests
 # 7  Add more features like voice recognition, text-to-speech, etc.
 # 8 Add more documentation and comments
+""" Add a search bar in history,
+
+Show flags or icons for languages,
+
+Export chat to PDF or text,
+
+Or even enable filtering by date or language,"""
