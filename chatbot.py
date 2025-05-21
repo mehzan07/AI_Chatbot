@@ -102,7 +102,6 @@ def chatbot_response(session_id, user_input):
     # Return cached reply
     cached = get_last_message(normalized_input)
     if cached:
-        save_to_db(session_id, normalized_input, cached, language=None)
         return cached
 
     # Query OpenAI
