@@ -109,8 +109,8 @@ def chatbot_response(session_id, user_input):
     {
         "role": "system",
         "content": (
-            "You are a helpful assistant. First, detect the language of the user input. "
-            "Then, respond to the input in the same language. "
+            "You are a helpful assistant. detect the language of the user input. "
+            "respond to the input in the same language. "
             "Return the result in the following JSON format:\n\n"
             "{\n"
             '  "language": "<language_code>",\n'
