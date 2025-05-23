@@ -34,7 +34,7 @@ def setup_database():
                 language TEXT
             )
         """)
-        conn.commit()
+        conn.commit() # Close the connection
 
 setup_database()
 
@@ -48,8 +48,8 @@ def save_to_db(session_id, user_input, bot_response, language):
             INSERT INTO chats (session_id, user_input, bot_response, timestamp, language)
             VALUES (?, ?, ?, ?, ?)
         """, (session_id, normalized_input, bot_response, timestamp, language))
-        conn.commit()
-
+        conn.commit() # Close the connection
+        
 # === Fetch Last Bot Response for Reuse ===
 def get_last_message(user_input):
     normalized_input = user_input.lower().translate(str.maketrans('', '', re.escape('!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~')))
@@ -80,6 +80,37 @@ def detect_datetime_question(user_input):
         if any(kw in text for kw in keywords):
             return answer
     return None
+
+# This function checks if the response from the OpenAI API is valid by looking for common error messages or keywords.
+# This function checks if the response contains date/time-like content. It uses a list of keywords and regex patterns to identify such content.
+
+import re
+# This function checks if the response contains date/time-like content. It uses a list of keywords and regex patterns to identify such content.
+def looks_like_datetime_response(response: str) -> bool:
+    response = response.lower()
+
+    # Regex: look for very specific datetime phrases or formats
+    datetime_patterns = [
+        r"\btoday is\b",
+        r"\bcurrent date\b",
+        r"\bthe date is\b",
+        r"\bnow is\b",
+        r"\btime is\b",
+        r"\b\d{4}-\d{2}-\d{2}\b",  # e.g., 2025-05-17
+        r"\b\d{1,2} (january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\b",
+        r"\bit's (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+        r"\bthis month is\b",
+        r"\bthe month is\b",
+        r"\btoday\b",
+        r"\bthis year\b",
+        r"\bthis week\b"
+    ]
+
+    for pattern in datetime_patterns:
+        if re.search(pattern, response):
+            return True
+    return False
+
 
 # === Validate AI Response ===
 def is_valid_response(response: str) -> bool:
@@ -125,8 +156,7 @@ def chatbot_response(session_id, user_input):
     }
 ]
 
-
-    try:
+    try: # Send request to OpenAI
         completion = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
@@ -141,7 +171,11 @@ def chatbot_response(session_id, user_input):
         response = reply.strip() if 'reply' in locals() else "Sorry, I don't have an answer right now."
         language = None
 
-    save_to_db(session_id, normalized_input, response, language)
+    if is_valid_response(response) \
+        and not detect_datetime_question(user_input) \
+        and not looks_like_datetime_response(response):
+        save_to_db(session_id, normalized_input, response, language)
+
     return response
 
 # === Fetch Chat History for a Session ===
